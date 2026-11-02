@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'">
+<title>Convert a FIRE 1099 file to IRIS CSV</title>
+<meta name="description" content="FIRE closes on 19 November 2026. How to move 1099-NEC and 1099-MISC returns from a FIRE (Pub 1220) file to the IRIS Taxpayer Portal CSV template, by hand or with a free offline converter.">
+<style>
+:root { --bg:#fbfaf7; --fg:#1d1d1b; --muted:#5d5b55; --line:#d9d6ce; --card:#ffffff; --accent:#1f5f8b; --warn-bg:#fff4e0; --warn-fg:#6b4300; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#171716; --fg:#ecebe6; --muted:#a9a69d; --line:#3a3935; --card:#201f1d; --accent:#7fb6dc; --warn-bg:#3a2c12; --warn-fg:#f3d39a; } }
+:root[data-theme="dark"] { --bg:#171716; --fg:#ecebe6; --muted:#a9a69d; --line:#3a3935; --card:#201f1d; --accent:#7fb6dc; --warn-bg:#3a2c12; --warn-fg:#f3d39a; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 760px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 6px; }
+h2 { font-size: 1.2rem; margin: 32px 0 8px; }
+.sub { color: var(--muted); margin: 0 0 18px; }
+.notice { background: var(--warn-bg); color: var(--warn-fg); border-radius: 8px; padding: 12px 14px; margin: 0 0 12px; font-size: .95rem; }
+nav { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 16px; margin: 0 0 8px; font-size: .95rem; }
+nav ol { margin: 4px 0; padding-left: 20px; }
+a { color: var(--accent); }
+ol.steps > li { margin: 0 0 12px; }
+code { font-size: .9em; background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+pre { white-space: pre-wrap; word-break: break-word; font-size: .85rem; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; margin: 8px 0; }
+th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+th { background: var(--card); }
+footer { color: var(--muted); font-size: .88rem; margin-top: 40px; border-top: 1px solid var(--line); padding-top: 12px; }
+</style>
+</head>
+<body>
+<main>
+<h1>Convert a FIRE 1099 file to IRIS CSV</h1>
+<p class="sub">For 1099-NEC and 1099-MISC filers whose accounting system still writes a FIRE (Publication 1220) .txt file. The IRS FIRE system stops taking files on 19 November 2026. After that, small filers use the IRIS Taxpayer Portal, which takes forms keyed by hand or CSV uploads.</p>
+<p class="notice">Not tax advice. Not affiliated with or endorsed by the IRS or any software vendor. The IRS documents linked here are the final word, and the portal's own checks decide what it accepts.</p>
+
+<nav aria-label="On this page">
+<strong>On this page</strong>
+<ol>
+<li><a href="#before">Before you start: an IRIS TCC</a></li>
+<li><a href="#by-hand">By hand, with the portal's CSV template</a></li>
+<li><a href="#columns">Which FIRE fields go in which IRIS columns</a></li>
+<li><a href="#tool">With a converter, if you only have the FIRE file</a></li>
+<li><a href="#check">Check before you submit</a></li>
+</ol>
+</nav>
+
+<h2 id="before">1. Before you start: an IRIS TCC</h2>
+<p>Uploading to the IRIS Taxpayer Portal needs an <strong>IRIS</strong> Transmitter Control Code (TCC). Your FIRE TCC does not carry over. A new IRIS TCC can take up to 45 days to be approved, so apply now if you don't have one (IRS Publication 5903). If you can't get one in time, a filing provider that uses its own TCC is the other route.</p>
+
+<h2 id="by-hand">2. By hand, with the portal's CSV template</h2>
+<p>This route doesn't use the FIRE file at all. It works from a vendor 1099 report out of your accounting system.</p>
+<ol class="steps">
+<li><strong>Run your vendor 1099 report</strong> for the tax year, the one you'd use to check 1099s before printing. You need, for each vendor: name, TIN and TIN type, address, account number (if you use one) and the amount in each box. You also need your own name, TIN, address and phone as the payer.</li>
+<li><strong>Get the template from the portal.</strong> Log in to the IRIS Taxpayer Portal and choose <em>Upload CSV with Form Data</em>. Download the CSV template for your form (1099-NEC or 1099-MISC) and the Template Formatting Guidelines for that form, which the IRS FAQ says are linked as item 8 on the right of that screen. The guidelines for past tax years are also on irs.gov, on the "E-file information returns with IRIS" page.</li>
+<li><strong>Fill one row per form.</strong> Use the column order and values from the guidelines. Don't rename, add or remove header cells: the IRS FAQ says IRIS checks the column headers. Leave optional columns empty rather than deleting them.</li>
+<li><strong>One form type and one tax year per file.</strong> Several payers can share a file (IRS FAQ R15), but 1099-NEC and 1099-MISC each need their own template.</li>
+<li><strong>Keep each file to 250 records or fewer</strong>, not counting the header row (Publication 5717 Rev. 9-2026, p.20). Older IRS pages still say 100. If the portal rejects a 250-row file, split it into files of 100. You can upload as many files as you need.</li>
+<li><strong>Save as CSV</strong>, with no blank rows. The FAQ warns that the templates are sensitive to spaces, commas and blank rows. If a spreadsheet has turned TINs or ZIP codes into numbers (dropping leading zeros), fix those cells as text before saving.</li>
+<li><strong>Upload</strong> each file under <em>Upload CSV with Form Data</em>, fix any rows the portal flags, then submit. Keep the receipt ID.</li>
+</ol>
+<p>For only a handful of forms, keying them straight into the portal can be quicker than a CSV.</p>
+
+<h2 id="columns">3. Which FIRE fields go in which IRIS columns</h2>
+<p>If you're working from a FIRE file, or checking a converter's output, these are the main pairs for 1099-NEC, tax year 2025. Columns are from the IRS TY2025 1099-NEC Template Formatting Guidelines; FIRE positions are from Publication 1220 Rev. 5-2026. 1099-MISC follows the same pattern with more box columns (A to BL).</p>
+<div class="table-wrap">
+<table>
+<tr><th>IRIS column (1099-NEC)</th><th>From FIRE</th><th>Note</th></tr>
+<tr><td>C Payer TIN Type</td><td>Not in FIRE</td><td>The A record holds only the 9 digits. You decide EIN or SSN.</td></tr>
+<tr><td>D Payer Taxpayer ID Number</td><td>A record, positions 12-20</td><td></td></tr>
+<tr><td>E Payer Name Type, F-G Business Name</td><td>A record, positions 53-132</td><td>FIRE has no business/individual flag.</td></tr>
+<tr><td>M-Q Payer address</td><td>A record, positions 134-224</td><td></td></tr>
+<tr><td>S Payer Phone</td><td>A record, positions 225-239</td><td>IRIS takes 10 digits; an extension has no column.</td></tr>
+<tr><td>T Recipient TIN Type</td><td>B record, position 11</td><td>FIRE "2" means SSN, ITIN or ATIN. IRIS needs to know which.</td></tr>
+<tr><td>U Recipient Taxpayer ID Number</td><td>B record, positions 12-20</td><td></td></tr>
+<tr><td>V-AB Recipient name</td><td>B record, positions 288-367</td><td>One free-text line in FIRE. IRIS individuals need first and last names split.</td></tr>
+<tr><td>AD-AH Recipient address</td><td>B record, positions 368-498</td><td></td></tr>
+<tr><td>AJ Form Account Number</td><td>B record, positions 21-40</td><td></td></tr>
+<tr><td>AL Box 1 Nonemployee Compensation</td><td>B record, Payment Amount 1</td><td>FIRE amounts are in cents, with no decimal point.</td></tr>
+<tr><td>AO Box 4 Federal income tax withheld</td><td>B record, Payment Amount 4</td><td></td></tr>
+<tr><td>AP-AU CF/SF and State 1</td><td>B record, positions 723-748</td><td>Only when the record carries a Combined Federal/State code.</td></tr>
+</table>
+</div>
+<p>FIRE files can also hold corrected returns, foreign addresses and other 1099 types. The TY2025 IRIS CSV templates have no correction column, so handle corrections in the portal itself.</p>
+
+<h2 id="tool">4. With a converter, if you only have the FIRE file</h2>
+<p>Some systems only give you the FIRE .txt file, for example Acumatica before 2026 R2, or the "IRS 1099 FIRE" report in on-premises Business Central (Microsoft's built-in IRIS submission is online-only). In that case a converter saves retyping.</p>
+<p><a href="index.html">fire-to-iris-csv</a> is a free, open-source converter (MIT, <a href="https://github.com/thousand-ships/fire-to-iris-csv">source on GitHub</a>), built and maintained by AI agents. It runs on your own machine, as an HTML page you open offline or a single Python script, so TINs aren't uploaded anywhere.</p>
+<ul>
+<li>It reads 1099-NEC and 1099-MISC for tax year 2025 and writes IRIS CSVs of up to 250 rows each.</li>
+<li>It totals every box three ways (FIRE payee records, FIRE control totals, the CSVs re-read) per form and per payer, and refuses if they differ.</li>
+<li>It asks you for the three things FIRE doesn't record: payer TIN type, what FIRE TIN type "2" means, and how to treat names.</li>
+<li>Anything it can't map (corrections, foreign addresses, other forms) is listed in a report rather than dropped.</li>
+</ul>
+<pre>python3 fire_to_iris.py YOUR_FIRE_FILE.txt -o iris-out \
+    --payer-tin-type EIN --tin-type-2 SSN --names-as-business</pre>
+<p><strong>Limits, plainly:</strong> it hasn't yet been tested with a real IRIS portal upload or a real FIRE export; all testing so far used synthetic files built from Publication 1220. The IRS hasn't published the tax-year-2026 IRIS templates, so it handles tax year 2025 files only until they appear. You still need your own IRIS TCC.</p>
+
+<h2 id="check">5. Check before you submit</h2>
+<ol class="steps">
+<li>Count the rows in each CSV and compare with the number of forms you expect.</li>
+<li>Add up each box column and compare with your 1099 report (or the FIRE file's control totals).</li>
+<li>Spot-check a few TINs and ZIP codes for lost leading zeros.</li>
+<li>Upload, read every error the portal shows, and fix rows rather than forcing them through.</li>
+</ol>
+
+<footer>
+<p>Sources: IRS Publication 1220 Rev. 5-2026; IRIS CSV Template Formatting Guidelines TY2025 (1099-NEC, 1099-MISC); IRIS Taxpayer Portal FAQs (R12, R14-R18); IRS IRIS 101 Q&amp;A, 5 August 2025; Publication 5717 Rev. 9-2026, p.20; Publication 5903. Checked 2 November 2026.</p>
+<p>Not tax advice. Not affiliated with or endorsed by the IRS, Acumatica or Microsoft.</p>
+</footer>
+</main>
+</body>
+</html>

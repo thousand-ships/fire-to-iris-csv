@@ -1,0 +1,808 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>FIRE to IRIS CSV</title>
+<style>
+:root { --bg:#fbfaf7; --fg:#1d1d1b; --muted:#5d5b55; --line:#d9d6ce; --card:#ffffff; --accent:#1f5f8b; --warn-bg:#fff4e0; --warn-fg:#6b4300; --bad:#a3261f; --ok:#22693a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#171716; --fg:#ecebe6; --muted:#a9a69d; --line:#3a3935; --card:#201f1d; --accent:#7fb6dc; --warn-bg:#3a2c12; --warn-fg:#f3d39a; --bad:#ff8a80; --ok:#8fd6a5; } }
+:root[data-theme="dark"] { --bg:#171716; --fg:#ecebe6; --muted:#a9a69d; --line:#3a3935; --card:#201f1d; --accent:#7fb6dc; --warn-bg:#3a2c12; --warn-fg:#f3d39a; --bad:#ff8a80; --ok:#8fd6a5; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 860px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 1.6rem; margin: 0 0 4px; }
+.sub { color: var(--muted); margin: 0 0 20px; }
+.notice { background: var(--warn-bg); color: var(--warn-fg); border-radius: 8px; padding: 12px 14px; margin: 0 0 12px; font-size: .95rem; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 16px 0; }
+label { display: block; margin: 10px 0 4px; font-weight: 600; }
+.hint { color: var(--muted); font-size: .88rem; font-weight: 400; }
+select, input[type=number] { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+.check { display: flex; gap: 8px; align-items: flex-start; font-weight: 400; }
+.check input { margin-top: 5px; }
+button { font: inherit; font-weight: 600; background: var(--accent); color: var(--bg); border: 0; border-radius: 8px; padding: 10px 18px; cursor: pointer; margin-top: 14px; }
+button:disabled { opacity: .5; cursor: default; }
+#drop { border: 2px dashed var(--line); border-radius: 10px; padding: 22px; text-align: center; color: var(--muted); }
+#drop.over { border-color: var(--accent); }
+#status { font-weight: 700; margin: 8px 0; }
+.ok { color: var(--ok); } .bad { color: var(--bad); }
+#downloads a { display: inline-block; margin: 4px 10px 4px 0; color: var(--accent); }
+pre { white-space: pre-wrap; word-break: break-word; font-size: .82rem; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 12px; max-height: 60vh; overflow: auto; }
+</style>
+</head>
+<body>
+<main>
+<h1>FIRE to IRIS CSV</h1>
+<p class="sub">Turns a FIRE (IRS Publication 1220) .txt file into IRIS Taxpayer Portal CSV files. Handles 1099-NEC and 1099-MISC for tax year 2025 only. Runs entirely in this page: no uploads and no network (a Content-Security-Policy blocks all connections), so TINs never leave your computer.</p>
+<p class="notice" id="disclaimer"></p>
+<p class="notice" id="tcc"></p>
+
+<div class="card">
+  <div id="drop">Drop your FIRE .txt file here, or <input type="file" id="file" accept=".txt,text/plain"></div>
+  <label for="ptin">Payer TIN type <span class="hint">(FIRE does not record it; IRIS col C needs it)</span></label>
+  <select id="ptin"><option value="">choose</option><option>EIN</option><option>SSN</option></select>
+  <label for="tin2">Payees with FIRE TIN type "2" are <span class="hint">(FIRE "2" means SSN, ITIN or ATIN; IRIS needs one)</span></label>
+  <select id="tin2"><option value="">choose</option><option>SSN</option><option>ITIN</option><option>ATIN</option></select>
+  <label class="check"><input type="checkbox" id="biz"> <span>Put every FIRE name line into IRIS Business Name Line 1/2 with Name Type "B" <span class="hint">(FIRE has one free-text name line and no business/individual flag)</span></span></label>
+  <label for="batch">Records per CSV <span class="hint">(up to 250, IRS Pub 5717 p.20)</span></label>
+  <input type="number" id="batch" min="1" max="250" value="250">
+  <label class="check"><input type="checkbox" id="allowun"> <span>Write CSVs even if some payment amounts have no IRIS column <span class="hint">(they stay listed; you key them by hand)</span></span></label>
+  <label class="check"><input type="checkbox" id="skipun"> <span>Skip return types other than 1099-NEC/MISC instead of refusing</span></label>
+  <button id="go" disabled>Convert</button>
+</div>
+
+<div class="card" id="result" hidden>
+  <div id="status"></div>
+  <div id="downloads"></div>
+  <pre id="report"></pre>
+</div>
+<p class="sub">Open source (MIT). Same logic as the <code>fire_to_iris.py</code> command-line tool, tested against it on synthetic files. Not yet tested with a real IRIS portal upload. Not affiliated with or endorsed by the IRS.</p>
+</main>
+
+<!-- SPEC-TABLES:BEGIN (generated from fire_to_iris.py by tests/sync_html.py; do not edit by hand) -->
+<script type="application/json" id="spec-tables">{"TABLES":{"2025":{"fire":{"edition":"Pub 1220 Rev. 5-2026 (Tax Year 2025)","T":[{"start":1,"end":1,"name":"Record Type","disp":"control","cite":"p1220 p.48"},{"start":2,"end":5,"name":"Payment Year","disp":"control","cite":"p1220 p.48"},{"start":6,"end":6,"name":"Prior Year Data Indicator","disp":"control","cite":"p1220 p.48"},{"start":7,"end":15,"name":"Transmitter's TIN","disp":"fire_only","cite":"p1220 p.48"},{"start":16,"end":20,"name":"Transmitter Control Code","disp":"fire_only","cite":"p1220 p.48"},{"start":21,"end":27,"name":"Blank","disp":"blank","cite":"p1220 p.48"},{"start":28,"end":28,"name":"Test File Indicator","disp":"fire_only","cite":"p1220 p.48"},{"start":29,"end":29,"name":"Foreign Entity Indicator","disp":"fire_only","cite":"p1220 p.49"},{"start":30,"end":69,"name":"Transmitter Name","disp":"fire_only","cite":"p1220 p.49"},{"start":70,"end":109,"name":"Transmitter Name (Continuation)","disp":"fire_only","cite":"p1220 p.49"},{"start":110,"end":149,"name":"Company Name","disp":"fire_only","cite":"p1220 p.49"},{"start":150,"end":189,"name":"Company Name (Continuation)","disp":"fire_only","cite":"p1220 p.49"},{"start":190,"end":229,"name":"Company Mailing Address","disp":"fire_only","cite":"p1220 p.49"},{"start":230,"end":269,"name":"Company City","disp":"fire_only","cite":"p1220 p.49"},{"start":270,"end":271,"name":"Company State","disp":"fire_only","cite":"p1220 p.49"},{"start":272,"end":280,"name":"Company ZIP Code","disp":"fire_only","cite":"p1220 p.49"},{"start":281,"end":295,"name":"Blank","disp":"blank","cite":"p1220 p.49"},{"start":296,"end":303,"name":"Total Number of Payees","disp":"control","cite":"p1220 p.50"},{"start":304,"end":343,"name":"Contact Name","disp":"fire_only","cite":"p1220 p.50"},{"start":344,"end":358,"name":"Contact Telephone Number & Extension","disp":"fire_only","cite":"p1220 p.50"},{"start":359,"end":408,"name":"Contact Email Address","disp":"fire_only","cite":"p1220 p.50"},{"start":409,"end":499,"name":"Blank","disp":"blank","cite":"p1220 p.50"},{"start":500,"end":507,"name":"Record Sequence Number","disp":"control","cite":"p1220 p.50"},{"start":508,"end":517,"name":"Blank","disp":"blank","cite":"p1220 p.50"},{"start":518,"end":518,"name":"Vendor Indicator","disp":"fire_only","cite":"p1220 p.51"},{"start":519,"end":558,"name":"Vendor Name","disp":"fire_only","cite":"p1220 p.51"},{"start":559,"end":598,"name":"Vendor Mailing Address","disp":"fire_only","cite":"p1220 p.51"},{"start":599,"end":638,"name":"Vendor City","disp":"fire_only","cite":"p1220 p.51"},{"start":639,"end":640,"name":"Vendor State","disp":"fire_only","cite":"p1220 p.51"},{"start":641,"end":649,"name":"Vendor ZIP Code","disp":"fire_only","cite":"p1220 p.52"},{"start":650,"end":689,"name":"Vendor Contact Name","disp":"fire_only","cite":"p1220 p.52"},{"start":690,"end":704,"name":"Vendor Contact Telephone Number & Extension","disp":"fire_only","cite":"p1220 p.52"},{"start":705,"end":739,"name":"Blank","disp":"blank","cite":"p1220 p.52"},{"start":740,"end":740,"name":"Vendor Foreign Entity Indicator","disp":"fire_only","cite":"p1220 p.52"},{"start":741,"end":748,"name":"Blank","disp":"blank","cite":"p1220 p.52"}],"A":[{"start":1,"end":1,"name":"Record Type","disp":"control","cite":"p1220 p.55"},{"start":2,"end":5,"name":"Payment Year","disp":"control","cite":"p1220 p.55"},{"start":6,"end":6,"name":"Combined Federal/State Filing Program","disp":"map","cite":"p1220 p.55"},{"start":7,"end":11,"name":"Blank","disp":"blank","cite":"p1220 p.55"},{"start":12,"end":20,"name":"Issuer TIN","disp":"map","cite":"p1220 p.55"},{"start":21,"end":24,"name":"Issuer Name Control","disp":"fire_only","cite":"p1220 p.55"},{"start":25,"end":25,"name":"Last Filing Indicator","disp":"fire_only","cite":"p1220 p.55"},{"start":26,"end":27,"name":"Type of Return","disp":"control","cite":"p1220 p.56"},{"start":28,"end":45,"name":"Amount Codes","disp":"control","cite":"p1220 p.57"},{"start":46,"end":51,"name":"Blank","disp":"blank","cite":"p1220 p.70"},{"start":52,"end":52,"name":"Foreign Entity Indicator","disp":"map","cite":"p1220 p.70"},{"start":53,"end":92,"name":"First Issuer Name Line","disp":"map","cite":"p1220 p.71"},{"start":93,"end":132,"name":"Second Issuer Name Line","disp":"map","cite":"p1220 p.71"},{"start":133,"end":133,"name":"Transfer Agent Indicator","disp":"map","cite":"p1220 p.71"},{"start":134,"end":173,"name":"Issuer Shipping Address","disp":"map","cite":"p1220 p.71"},{"start":174,"end":213,"name":"Issuer City","disp":"map","cite":"p1220 p.72"},{"start":214,"end":215,"name":"Issuer State","disp":"map","cite":"p1220 p.72"},{"start":216,"end":224,"name":"Issuer ZIP Code","disp":"map","cite":"p1220 p.72"},{"start":225,"end":239,"name":"Issuer Telephone Number & Extension","disp":"map","cite":"p1220 p.72"},{"start":240,"end":499,"name":"Blank","disp":"blank","cite":"p1220 p.72"},{"start":500,"end":507,"name":"Record Sequence Number","disp":"control","cite":"p1220 p.72"},{"start":508,"end":748,"name":"Blank","disp":"blank","cite":"p1220 p.72"}],"B_common":[{"start":1,"end":1,"name":"Record Type","disp":"control","cite":"p1220 p.74"},{"start":2,"end":5,"name":"Payment Year","disp":"control","cite":"p1220 p.74"},{"start":6,"end":6,"name":"Corrected Return Indicator","disp":"control","cite":"p1220 p.74"},{"start":7,"end":10,"name":"Name Control","disp":"fire_only","cite":"p1220 p.74"},{"start":11,"end":11,"name":"Type of TIN","disp":"map","cite":"p1220 p.75"},{"start":12,"end":20,"name":"Payee's TIN","disp":"map","cite":"p1220 p.75"},{"start":21,"end":40,"name":"Issuer's Account Number for Payee","disp":"map","cite":"p1220 p.76"},{"start":41,"end":44,"name":"Issuer's Office Code","disp":"map","cite":"p1220 p.76"},{"start":45,"end":54,"name":"Blank","disp":"blank","cite":"p1220 p.76"},{"start":55,"end":66,"name":"Payment Amount 1","disp":"map","cite":"p1220 p.77-78"},{"start":67,"end":78,"name":"Payment Amount 2","disp":"map","cite":"p1220 p.77-78"},{"start":79,"end":90,"name":"Payment Amount 3","disp":"map","cite":"p1220 p.77-78"},{"start":91,"end":102,"name":"Payment Amount 4","disp":"map","cite":"p1220 p.77-78"},{"start":103,"end":114,"name":"Payment Amount 5","disp":"map","cite":"p1220 p.77-78"},{"start":115,"end":126,"name":"Payment Amount 6","disp":"map","cite":"p1220 p.77-78"},{"start":127,"end":138,"name":"Payment Amount 7","disp":"map","cite":"p1220 p.77-78"},{"start":139,"end":150,"name":"Payment Amount 8","disp":"map","cite":"p1220 p.77-78"},{"start":151,"end":162,"name":"Payment Amount 9","disp":"map","cite":"p1220 p.77-78"},{"start":163,"end":174,"name":"Payment Amount A","disp":"map","cite":"p1220 p.77-78"},{"start":175,"end":186,"name":"Payment Amount B","disp":"map","cite":"p1220 p.77-78"},{"start":187,"end":198,"name":"Payment Amount C","disp":"map","cite":"p1220 p.77-78"},{"start":199,"end":210,"name":"Payment Amount D","disp":"map","cite":"p1220 p.77-78"},{"start":211,"end":222,"name":"Payment Amount E","disp":"map","cite":"p1220 p.77-78"},{"start":223,"end":234,"name":"Payment Amount F","disp":"map","cite":"p1220 p.77-78"},{"start":235,"end":246,"name":"Payment Amount G","disp":"map","cite":"p1220 p.77-78"},{"start":247,"end":258,"name":"Payment Amount H","disp":"map","cite":"p1220 p.77-78"},{"start":259,"end":270,"name":"Payment Amount J","disp":"map","cite":"p1220 p.77-78"},{"start":271,"end":286,"name":"Blank","disp":"blank","cite":"p1220 p.78"},{"start":287,"end":287,"name":"Foreign Country Indicator","disp":"map","cite":"p1220 p.78"},{"start":288,"end":327,"name":"First Payee Name Line","disp":"map","cite":"p1220 p.79"},{"start":328,"end":367,"name":"Second Payee Name Line","disp":"map","cite":"p1220 p.79"},{"start":368,"end":407,"name":"Payee Mailing Address","disp":"map","cite":"p1220 p.79"},{"start":408,"end":447,"name":"Blank","disp":"blank","cite":"p1220 p.79"},{"start":448,"end":487,"name":"Payee City","disp":"map","cite":"p1220 p.79"},{"start":488,"end":489,"name":"Payee State","disp":"map","cite":"p1220 p.80"},{"start":490,"end":498,"name":"Payee ZIP Code","disp":"map","cite":"p1220 p.80"},{"start":499,"end":499,"name":"Blank","disp":"blank","cite":"p1220 p.80"},{"start":500,"end":507,"name":"Record Sequence Number","disp":"control","cite":"p1220 p.80"},{"start":508,"end":543,"name":"Blank","disp":"blank","cite":"p1220 p.80"}],"B_NE":[{"start":544,"end":544,"name":"Second TIN Notice","disp":"map","cite":"p1220 p.113"},{"start":545,"end":546,"name":"Blank","disp":"blank","cite":"p1220 p.113"},{"start":547,"end":547,"name":"Direct Sales Indicator","disp":"map","cite":"p1220 p.113"},{"start":548,"end":662,"name":"Blank","disp":"blank","cite":"p1220 p.113"},{"start":663,"end":722,"name":"Special Data Entries","disp":"gap","cite":"p1220 p.113; SPEC-GAP G3"},{"start":723,"end":734,"name":"State Income Tax Withheld","disp":"map","cite":"p1220 p.113"},{"start":735,"end":746,"name":"Local Income Tax Withheld","disp":"map","cite":"p1220 p.114"},{"start":747,"end":748,"name":"Combined Federal/State Code","disp":"map","cite":"p1220 p.114"}],"B_A":[{"start":544,"end":544,"name":"Second TIN Notice","disp":"map","cite":"p1220 p.112"},{"start":545,"end":546,"name":"Blank","disp":"blank","cite":"p1220 p.112"},{"start":547,"end":547,"name":"Direct Sales Indicator","disp":"map","cite":"p1220 p.112"},{"start":548,"end":548,"name":"FATCA Filing Requirement Indicator","disp":"map","cite":"p1220 p.112"},{"start":549,"end":662,"name":"Blank","disp":"blank","cite":"p1220 p.112"},{"start":663,"end":722,"name":"Special Data Entries","disp":"gap","cite":"p1220 p.112; SPEC-GAP G3"},{"start":723,"end":734,"name":"State Income Tax Withheld","disp":"map","cite":"p1220 p.112"},{"start":735,"end":746,"name":"Local Income Tax Withheld","disp":"map","cite":"p1220 p.112"},{"start":747,"end":748,"name":"Combined Federal/State Code","disp":"map","cite":"p1220 p.112"}],"C":[{"start":1,"end":1,"name":"Record Type","disp":"control","cite":"p1220 p.139"},{"start":2,"end":9,"name":"Number of Payees","disp":"control","cite":"p1220 p.139"},{"start":10,"end":15,"name":"Blank","disp":"blank","cite":"p1220 p.139"},{"start":16,"end":33,"name":"Control Total 1","disp":"control","cite":"p1220 p.139/p.141"},{"start":34,"end":51,"name":"Control Total 2","disp":"control","cite":"p1220 p.139/p.141"},{"start":52,"end":69,"name":"Control Total 3","disp":"control","cite":"p1220 p.139/p.141"},{"start":70,"end":87,"name":"Control Total 4","disp":"control","cite":"p1220 p.139/p.141"},{"start":88,"end":105,"name":"Control Total 5","disp":"control","cite":"p1220 p.139/p.141"},{"start":106,"end":123,"name":"Control Total 6","disp":"control","cite":"p1220 p.139/p.141"},{"start":124,"end":141,"name":"Control Total 7","disp":"control","cite":"p1220 p.139/p.141"},{"start":142,"end":159,"name":"Control Total 8","disp":"control","cite":"p1220 p.139/p.141"},{"start":160,"end":177,"name":"Control Total 9","disp":"control","cite":"p1220 p.139/p.141"},{"start":178,"end":195,"name":"Control Total A","disp":"control","cite":"p1220 p.139/p.141"},{"start":196,"end":213,"name":"Control Total B","disp":"control","cite":"p1220 p.139/p.141"},{"start":214,"end":231,"name":"Control Total C","disp":"control","cite":"p1220 p.139/p.141"},{"start":232,"end":249,"name":"Control Total D","disp":"control","cite":"p1220 p.139/p.141"},{"start":250,"end":267,"name":"Control Total E","disp":"control","cite":"p1220 p.139/p.141"},{"start":268,"end":285,"name":"Control Total F","disp":"control","cite":"p1220 p.139/p.141"},{"start":286,"end":303,"name":"Control Total G","disp":"control","cite":"p1220 p.139/p.141"},{"start":304,"end":321,"name":"Control Total H","disp":"control","cite":"p1220 p.139/p.141"},{"start":322,"end":339,"name":"Control Total J","disp":"control","cite":"p1220 p.139/p.141"},{"start":340,"end":499,"name":"Blank","disp":"blank","cite":"p1220 p.140"},{"start":500,"end":507,"name":"Record Sequence Number","disp":"control","cite":"p1220 p.140"},{"start":508,"end":748,"name":"Blank","disp":"blank","cite":"p1220 p.140"}],"K":[{"start":1,"end":1,"name":"Record Type","disp":"control","cite":"p1220 p.141"},{"start":2,"end":9,"name":"Number of Payees","disp":"control","cite":"p1220 p.141"},{"start":10,"end":15,"name":"Blank","disp":"blank","cite":"p1220 p.141"},{"start":16,"end":33,"name":"Control Total 1","disp":"control","cite":"p1220 p.139/p.141"},{"start":34,"end":51,"name":"Control Total 2","disp":"control","cite":"p1220 p.139/p.141"},{"start":52,"end":69,"name":"Control Total 3","disp":"control","cite":"p1220 p.139/p.141"},{"start":70,"end":87,"name":"Control Total 4","disp":"control","cite":"p1220 p.139/p.141"},{"start":88,"end":105,"name":"Control Total 5","disp":"control","cite":"p1220 p.139/p.141"},{"start":106,"end":123,"name":"Control Total 6","disp":"control","cite":"p1220 p.139/p.141"},{"start":124,"end":141,"name":"Control Total 7","disp":"control","cite":"p1220 p.139/p.141"},{"start":142,"end":159,"name":"Control Total 8","disp":"control","cite":"p1220 p.139/p.141"},{"start":160,"end":177,"name":"Control Total 9","disp":"control","cite":"p1220 p.139/p.141"},{"start":178,"end":195,"name":"Control Total A","disp":"control","cite":"p1220 p.139/p.141"},{"start":196,"end":213,"name":"Control Total B","disp":"control","cite":"p1220 p.139/p.141"},{"start":214,"end":231,"name":"Control Total C","disp":"control","cite":"p1220 p.139/p.141"},{"start":232,"end":249,"name":"Control Total D","disp":"control","cite":"p1220 p.139/p.141"},{"start":250,"end":267,"name":"Control Total E","disp":"control","cite":"p1220 p.139/p.141"},{"start":268,"end":285,"name":"Control Total F","disp":"control","cite":"p1220 p.139/p.141"},{"start":286,"end":303,"name":"Control Total G","disp":"control","cite":"p1220 p.139/p.141"},{"start":304,"end":321,"name":"Control Total H","disp":"control","cite":"p1220 p.139/p.141"},{"start":322,"end":339,"name":"Control Total J","disp":"control","cite":"p1220 p.139/p.141"},{"start":340,"end":499,"name":"Blank","disp":"blank","cite":"p1220 p.141"},{"start":500,"end":507,"name":"Record Sequence Number","disp":"control","cite":"p1220 p.142"},{"start":508,"end":706,"name":"Blank","disp":"blank","cite":"p1220 p.142"},{"start":707,"end":724,"name":"State Income Tax Withheld Total","disp":"control","cite":"p1220 p.142"},{"start":725,"end":742,"name":"Local Income Tax Withheld Total","disp":"control","cite":"p1220 p.142"},{"start":743,"end":746,"name":"Blank","disp":"blank","cite":"p1220 p.142"},{"start":747,"end":748,"name":"Combined Federal/State Code","disp":"control","cite":"p1220 p.142"}],"F":[{"start":1,"end":1,"name":"Record Type","disp":"control","cite":"p1220 p.144"},{"start":2,"end":9,"name":"Number of A Records","disp":"control","cite":"p1220 p.144"},{"start":10,"end":30,"name":"Zero","disp":"control","cite":"p1220 p.144"},{"start":31,"end":49,"name":"Blank","disp":"blank","cite":"p1220 p.144"},{"start":50,"end":57,"name":"Total Number of Payees","disp":"control","cite":"p1220 p.144"},{"start":58,"end":499,"name":"Blank","disp":"blank","cite":"p1220 p.144"},{"start":500,"end":507,"name":"Record Sequence Number","disp":"control","cite":"p1220 p.144"},{"start":508,"end":748,"name":"Blank","disp":"blank","cite":"p1220 p.144"}]},"forms":{"NE":{"form":"1099-NEC","columns":[["A","Form Type"],["B","Tax Year"],["C","Payer TIN Type"],["D","Payer Taxpayer ID Number"],["E","Payer Name Type"],["F","Payer Business or Entity Name Line 1"],["G","Payer Business or Entity Name Line 2"],["H","Payer First Name"],["I","Payer Middle Name"],["J","Payer Last Name (Surname)"],["K","Payer Suffix"],["L","Payer Country"],["M","Payer Address Line 1"],["N","Payer Address Line 2"],["O","Payer City/Town"],["P","Payer State/Province/Territory"],["Q","Payer ZIP/Postal Code"],["R","Payer Phone Type"],["S","Payer Phone"],["T","Recipient TIN Type"],["U","Recipient Taxpayer ID Number"],["V","Recipient Name Type"],["W","Recipient Business or Entity Name Line 1"],["X","Recipient Business or Entity Name Line 2"],["Y","Recipient First Name"],["Z","Recipient Middle Name"],["AA","Recipient Last Name (Surname)"],["AB","Recipient Suffix"],["AC","Recipient Country"],["AD","Recipient Address Line 1"],["AE","Recipient Address Line 2"],["AF","Recipient City/Town"],["AG","Recipient State/Province/Territory"],["AH","Recipient ZIP/Postal Code"],["AI","Office Code"],["AJ","Form Account Number"],["AK","2nd TIN Notice"],["AL","Box 1 - Nonemployee Compensation"],["AM","Box 2 - Payer made direct sales totaling $5,000 or more of consumer products to a recipient for resale"],["AN","Box 3 - Excess golden parachute payments"],["AO","Box 4 - Federal income tax withheld"],["AP","Combined Federal/State Filing (CF/SF)"],["AQ","State 1"],["AR","State 1 - State Tax Withheld"],["AS","State 1 - State/Payer state number"],["AT","State 1 - State income"],["AU","State 1 - Local income tax withheld"],["AV","State 1 - Special Data Entries"],["AW","State 2"],["AX","State 2 - State Tax Withheld"],["AY","State 2 - State/Payer state number"],["AZ","State 2 - State income"],["BA","State 2 - Local income tax withheld"],["BB","State 2 - Special Data Entries"]],"amounts":{"1":["AL","p1220 p.65 'Nonemployee Compensation' = NEC col AL p.4"],"4":["AO","p1220 p.65 'Federal Income Tax Withheld' = NEC col AO p.4"]},"amount_gaps":{},"second_tin":"AK","direct_sales":"AM","fatca":null,"cfsf":"AP","state1":"AQ","state1_tax":"AR","state1_local":"AU"},"A":{"form":"1099-MISC","columns":[["A","Form Type"],["B","Tax Year"],["C","Payer TIN Type"],["D","Payer Taxpayer ID Number"],["E","Payer Name Type"],["F","Payer Business or Entity Name Line 1"],["G","Payer Business or Entity Name Line 2"],["H","Payer First Name"],["I","Payer Middle Name"],["J","Payer Last Name (Surname)"],["K","Payer Suffix"],["L","Payer Country"],["M","Payer Address Line 1"],["N","Payer Address Line 2"],["O","Payer City/Town"],["P","Payer State/Province/Territory"],["Q","Payer ZIP/Postal Code"],["R","Payer Phone Type"],["S","Payer Phone"],["T","Recipient TIN Type"],["U","Recipient Taxpayer ID Number"],["V","Recipient Name Type"],["W","Recipient Business or Entity Name Line 1"],["X","Recipient Business or Entity Name Line 2"],["Y","Recipient First Name"],["Z","Recipient Middle Name"],["AA","Recipient Last Name (Surname)"],["AB","Recipient Suffix"],["AC","Recipient Country"],["AD","Recipient Address Line 1"],["AE","Recipient Address Line 2"],["AF","Recipient City/Town"],["AG","Recipient State/Province/Territory"],["AH","Recipient ZIP/Postal Code"],["AI","Office Code"],["AJ","Form Account Number"],["AK","FATCA Filing Requirements"],["AL","2nd TIN Notice"],["AM","Box 1 - Rents"],["AN","Box 2 - Royalties"],["AO","Box 3 - Other income"],["AP","Box 4 - Federal income tax withheld"],["AQ","Box 5 - Fishing boat proceeds"],["AR","Box 6 - Medical and health care payments"],["AS","Box 7 - Direct sales of $5,000 or more of consumer products to a recipient for resale"],["AT","Box 8 - Substitute payments in lieu of dividends or interest"],["AU","Box 9 - Crop insurance proceeds"],["AV","Box 10 - Gross proceeds paid to an attorney"],["AW","Box 11 - Fish purchased for resale"],["AX","Box 12 - Section 409A deferrals"],["AY","Box 15 - Nonqualified deferred compensation"],["AZ","Combined Federal/State Filing (CF/SF)"],["BA","State 1"],["BB","State 1 - State Tax Withheld"],["BC","State 1 - State/Payer state number"],["BD","State 1 - State income"],["BE","State 1 - Local income tax withheld"],["BF","State 1 - Special Data Entries"],["BG","State 2"],["BH","State 2 - State Tax Withheld"],["BI","State 2 - State/Payer state number"],["BJ","State 2 - State income"],["BK","State 2 - Local income tax withheld"],["BL","State 2 - Special Data Entries"]],"amounts":{"1":["AM","p1220 p.65 'Rents' = MISC col AM p.4"],"2":["AN","p1220 p.65 'Royalties' = MISC col AN p.4"],"3":["AO","p1220 p.65 'Other income' = MISC col AO p.4"],"4":["AP","p1220 p.65 'Federal income tax withheld' = MISC col AP p.4"],"5":["AQ","p1220 p.65 'Fishing boat proceeds' = MISC col AQ p.4"],"6":["AR","p1220 p.65 'Medical and health care payments' = MISC col AR p.5"],"8":["AT","p1220 p.65 'Substitute payments in lieu of dividends or interest' = MISC col AT p.5"],"A":["AU","p1220 p.65 'Crop insurance proceeds' = MISC col AU p.5"],"C":["AV","p1220 p.65 'Gross proceeds paid to an attorney' = MISC col AV p.5"],"D":["AX","p1220 p.65 'Section 409A deferrals' = MISC col AX p.5"],"F":["AW","p1220 p.65 'Fish purchased for resale' = MISC col AW p.5"]},"amount_gaps":{"E":"SPEC-GAP G1: FIRE 'Section 409A income' (p1220 p.65) vs IRIS 'Box 15 - Nonqualified deferred compensation' (MISC col AY p.5): titles differ, neither spec maps them. Not converted.","G":"FIRE 'Prior Year Nonemployee Compensation (TY2019 and earlier)' (p1220 p.65) has no IRIS column in the TY2025 MISC template. Not converted."},"second_tin":"AL","direct_sales":"AS","fatca":"AK","cfsf":"AZ","state1":"BA","state1_tax":"BB","state1_local":"BE"}}}},"CFSF_STATE_CODES":{"01":"AL","04":"AZ","05":"AR","06":"CA","07":"CO","08":"CT","10":"DE","11":"DC","13":"GA","15":"HI","16":"ID","18":"IN","20":"KS","22":"LA","23":"ME","24":"MD","25":"MA","26":"MI","27":"MN","28":"MS","30":"MT","31":"NE","34":"NJ","35":"NM","37":"NC","38":"ND","39":"OH","40":"OK","42":"PA","44":"RI","45":"SC","55":"WI"},"RETURN_TYPE_NAMES":{"BT":"1097-BTC","3":"1098","X":"1098-C","2":"1098-E","FP":"1098-F","QL":"1098-Q","8":"1098-T","4":"1099-A","B":"1099-B","5":"1099-C","P":"1099-CAP","1":"1099-DIV","F":"1099-G","6":"1099-INT","MC":"1099-K","LS":"1099-LS","T":"1099-LTC","A":"1099-MISC","NE":"1099-NEC","D":"1099-OID","7":"1099-PATR","Q":"1099-Q","9":"1099-R","S":"1099-S","M":"1099-SA","SB":"1099-SB","N":"3921","Z":"3922","L":"5498","V":"5498-ESA","K":"5498-SA","W":"W-2G"},"DISCLAIMER":"DISCLAIMER: This is not tax advice and not an IRS product. Not affiliated with or endorsed by the IRS. The CSVs are a draft converted from your FIRE file. You are responsible for what you file. Check every row in the IRIS Taxpayer Portal before you submit; the portal validates the CSV on upload and may reject rows. Provided as-is under the MIT licence, with no warranty.","TCC_WARNING":"TCC WARNING: Uploading CSVs to the IRIS Taxpayer Portal needs your own IRIS Transmitter Control Code (TCC). Your FIRE TCC does not work in IRIS. A new IRIS TCC can take up to 45 days to be approved. If you do not have an IRIS TCC, these CSVs cannot be filed by you; use a provider that files under its own TCC, or apply for an IRIS TCC now (IRS Publication 5903).","PRIVACY_NOTE":"PRIVACY: runs locally, makes no network calls; TINs are masked in the report.","VERSION":"0.1.0"}</script>
+<!-- SPEC-TABLES:END -->
+
+<script id="core">
+// Converter core. Mirrors fire_to_iris.py function by function (same names); no DOM, no network.
+// Spec citations live in fire_to_iris.py next to the same logic and in the shared tables.
+var F2I = (function () {
+  "use strict";
+  var S = JSON.parse(document.getElementById("spec-tables").textContent);
+  var AMOUNT_CODES = "123456789ABCDEFGHJ";
+  var RECORD_LEN = 750;
+
+  function Refusal(msg, details) { this.refusal = msg; this.details = details || []; }
+  var REFUSAL_SHOWN = 20;
+  function refusal(prefix, errs) {
+    var shown = errs.slice(0, REFUSAL_SHOWN).join("; ");
+    if (errs.length > REFUSAL_SHOWN) shown += "; ... and " + (errs.length - REFUSAL_SHOWN) + " more (all listed in conversion-report.txt)";
+    return new Refusal(prefix + shown, errs);
+  }
+
+  function strip(s) { return s.replace(/^[ \t\r\n\f\v]+|[ \t\r\n\f\v]+$/g, ""); }
+  function rstrip(s) { return s.replace(/[ \t\r\n\f\v]+$/g, ""); }
+  function isDigits(s) { return /^[0-9]+$/.test(s); }
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+  function pyRepr(s) {
+    var q = (s.indexOf("'") >= 0 && s.indexOf('"') < 0) ? '"' : "'";
+    var body = s.replace(/\\/g, "\\\\");
+    if (q === "'") body = body.replace(/'/g, "\\'");
+    return q + body + q;
+  }
+  function centsToStr(c) { var d = Math.floor(c / 100); return d + "." + pad2(c - d * 100); }
+  function fld(rec, f) { return rec.substring(f.start - 1, f.end); }
+  function numOrZero(raw) { var s = strip(raw); return isDigits(s) ? parseInt(s, 10) : 0; }
+
+  function looksUtf8(text, off) {
+    var b = text.charCodeAt(off);
+    var n = (b >= 0xC2 && b <= 0xDF) ? 1 : (b >= 0xE0 && b <= 0xEF) ? 2 : (b >= 0xF0 && b <= 0xF4) ? 3 : 0;
+    var tail = text.substring(off + 1, off + 1 + n);
+    if (!n || tail.length !== n) return false;
+    for (var i = 0; i < n; i++) { var c = tail.charCodeAt(i); if (c < 0x80 || c > 0xBF) return false; }
+    return true;
+  }
+  function hex2(n) { return ("0" + n.toString(16).toUpperCase()).slice(-2); }
+  function nonAscii(text) {  // p1220 p.37 (Sec. 4.01): standard ASCII required; see non_ascii() in fire_to_iris.py
+    var m = /[^\x00-\x7f]/.exec(text);
+    if (!m) return "";
+    var off = m.index, total = text.match(/[^\x00-\x7f]/g).length, rec, pos;
+    if (/[\r\n]/.test(text)) {
+      var head = text.substring(0, off).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      rec = head.split("\n").length;
+      pos = off - Math.max(text.lastIndexOf("\n", off - 1), text.lastIndexOf("\r", off - 1));
+      if (off === 0) pos = 1;
+    } else {
+      rec = Math.floor(off / RECORD_LEN) + 1;
+      pos = off % RECORD_LEN + 1;
+    }
+    var kind = looksUtf8(text, off) ? "it looks like UTF-8; export the file as plain ASCII"
+      : "it looks like a Windows/latin-1 code page; export the file as plain ASCII";
+    return "file is not standard ASCII: byte 0x" + hex2(text.charCodeAt(off)) + " at byte offset " + off + " (record " + rec +
+      ", position " + pos + "); " + total + " non-ASCII byte(s) in total. Pub 1220 p.37 (Sec. 4.01) requires standard ASCII " +
+      "for all files (also p.41). Refusing rather than guessing the encoding, because a wrong guess garbles names: " + kind +
+      ", or replace accented letters with plain ones.";
+  }
+
+  function splitRecords(text) {
+    var errors = [], records = [];
+    var bad = nonAscii(text);
+    if (bad) return [[], [bad]];
+    if (/[\r\n]/.test(text)) {
+      var lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+      while (lines.length && strip(lines[lines.length - 1]) === "") lines.pop();
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (line.length < 748 || line.length > RECORD_LEN) {
+          errors.push("line " + (i + 1) + ": length " + line.length + ", expected 748-750 positions (p1220 p.47)");
+          continue;
+        }
+        if (strip(line.substring(748))) {
+          errors.push("line " + (i + 1) + ": positions 749-750 must be blanks or CR/LF (p1220 p.52)");
+          continue;
+        }
+        while (line.length < RECORD_LEN) line += " ";
+        records.push(line);
+      }
+    } else {
+      if (text.length % RECORD_LEN) errors.push("file length " + text.length + " is not a multiple of 750 (p1220 p.47)");
+      for (var j = 0; j < text.length - text.length % RECORD_LEN; j += RECORD_LEN) {
+        var rec = text.substring(j, j + RECORD_LEN);
+        if (strip(rec.substring(748))) errors.push("record " + (j / RECORD_LEN + 1) + ": positions 749-750 must be blanks or CR/LF (p1220 p.52)");
+        records.push(rec);
+      }
+    }
+    return [records, errors];
+  }
+
+  function parseAmount(raw, where) {
+    var s = raw;
+    if (strip(s) === "") return 0;
+    var sign = 1;
+    if (s[0] === "+" || s[0] === "-") { sign = s[0] === "-" ? -1 : 1; s = s.substring(1); }
+    if (!isDigits(s)) throw new Refusal(where + ": payment amount " + pyRepr(raw) + " is not numeric (overpunch or bad data); p1220 p.77 requires digits, and 1099-NEC/MISC amounts may not be negative");
+    var v = parseInt(s, 10) * sign;
+    if (v < 0) throw new Refusal(where + ": negative amount " + pyRepr(raw) + "; not allowed for 1099-NEC/MISC (p1220 p.77)");
+    return v;
+  }
+
+  function parseTransmission(records) {
+    var errors = [], tx = { T: null, issuers: [], F: null }, cur = null, expect = 1;
+    for (var idx = 0; idx < records.length; idx++) {
+      var rec = records[idx], rt = rec[0], seq = rec.substring(499, 507);
+      if (isDigits(strip(seq)) && parseInt(seq, 10) !== expect)
+        errors.push("record " + (idx + 1) + " (" + rt + "): sequence number " + strip(seq) + ", expected " + expect + " (p1220 p.50)");
+      expect++;
+      var where = "record " + (idx + 1) + " (" + rt + ", seq " + strip(seq) + ")";
+      if (rt === "T") {
+        if (idx !== 0) errors.push(where + ": T record must be first and only once (p1220 p.48)");
+        tx.T = rec;
+      } else if (rt === "A") {
+        if (tx.T === null) errors.push(where + ": A record before T record (p1220 p.48)");
+        if (cur !== null && cur.C === null) errors.push(where + ": new A record before the previous issuer's C record (p1220 p.54)");
+        cur = { A: rec, B: [], C: null, K: [], where: where };
+        tx.issuers.push(cur);
+      } else if (rt === "B") {
+        if (cur === null || cur.C !== null) { errors.push(where + ": B record not preceded by an A record (p1220 p.54)"); continue; }
+        cur.B.push([rec, where]);
+      } else if (rt === "C") {
+        if (cur === null || cur.C !== null) { errors.push(where + ": C record without a matching A record (p1220 p.139)"); continue; }
+        cur.C = rec;
+      } else if (rt === "K") {
+        if (cur === null || cur.C === null) { errors.push(where + ": K record must follow a C record (p1220 p.141)"); continue; }
+        cur.K.push([rec, where]);
+      } else if (rt === "F") {
+        if (idx !== records.length - 1) errors.push(where + ": F record must be last (p1220 p.144)");
+        tx.F = rec;
+      } else {
+        errors.push(where + ": unknown record type " + pyRepr(rt) + " (only T, A, B, C, K, F exist, p1220 p.47)");
+      }
+    }
+    if (tx.T === null) errors.push("no T record (p1220 p.48)");
+    if (tx.F === null) errors.push("no F record (p1220 p.144)");
+    tx.issuers.forEach(function (iss) { if (iss.C === null) errors.push(iss.where + ": issuer has no C record (p1220 p.139)"); });
+    return [tx, errors];
+  }
+
+  function amountCodes(arec) { return arec.substring(27, 45).split("").filter(function (c) { return c !== " "; }); }
+  function rtOf(arec) { return strip(arec.substring(25, 27)); }
+  function zeroSums() { var o = {}; for (var i = 0; i < AMOUNT_CODES.length; i++) o[AMOUNT_CODES[i]] = 0; return o; }
+  function amountFields(layout) { return layout.B_common.filter(function (f) { return f.name.indexOf("Payment Amount") === 0; }); }
+
+  function checkControls(tx, layout, forms) {
+    var errors = [], totalB = 0, ctf = {};
+    layout.C.forEach(function (f) { if (f.name.indexOf("Control Total") === 0) ctf[f.name.slice(-1)] = f; });
+    var afs = amountFields(layout);
+    tx.issuers.forEach(function (iss) {
+      var sums = zeroSums();
+      if (!(rtOf(iss.A) in forms)) { iss.b_sums = sums; totalB += iss.B.length; return; }
+      iss.B.forEach(function (bw) {
+        afs.forEach(function (f) { sums[f.name.slice(-1)] += parseAmount(fld(bw[0], f), bw[1] + " " + f.name); });
+      });
+      iss.b_sums = sums;
+      totalB += iss.B.length;
+      var c = iss.C;
+      if (c === null) return;
+      var n = c.substring(1, 9);
+      if (!isDigits(n) || parseInt(n, 10) !== iss.B.length)
+        errors.push(iss.where + ": C record says " + strip(n) + " payees, file has " + iss.B.length + " B records (p1220 p.139)");
+      for (var i = 0; i < AMOUNT_CODES.length; i++) {
+        var code = AMOUNT_CODES[i], ct = parseAmount(fld(c, ctf[code]), "C record Control Total " + code);
+        if (ct !== sums[code]) errors.push(iss.where + ": C record Control Total " + code + " = " + centsToStr(ct) + " but B records sum to " + centsToStr(sums[code]) + " (p1220 p.139)");
+      }
+      var bspec = layout["B_" + rtOf(iss.A)];
+      iss.K.forEach(function (kw) {
+        var krec = kw[0], kwhere = kw[1], st = krec.substring(746, 748), ksums = zeroSums(), kn = 0, ks = 0, kl = 0;
+        iss.B.forEach(function (bw) {
+          var rec = bw[0];
+          if (rec.substring(746, 748) !== st) return;
+          kn++;
+          afs.forEach(function (f) { ksums[f.name.slice(-1)] += parseAmount(fld(rec, f), bw[1]); });
+          if (bspec) { ks += numOrZero(rec.substring(722, 734)); kl += numOrZero(rec.substring(734, 746)); }
+        });
+        if (!isDigits(krec.substring(1, 9)) || parseInt(krec.substring(1, 9), 10) !== kn)
+          errors.push(kwhere + ": K record for state code " + st + " says " + strip(krec.substring(1, 9)) + " payees, file has " + kn + " (p1220 p.141)");
+        for (var i = 0; i < AMOUNT_CODES.length; i++) {
+          var code = AMOUNT_CODES[i], kt = parseAmount(fld(krec, ctf[code]), kwhere);
+          if (kt !== ksums[code]) errors.push(kwhere + ": K record (state " + st + ") Control Total " + code + " = " + centsToStr(kt) + " but its B records sum to " + centsToStr(ksums[code]) + " (p1220 p.141)");
+        }
+        [[706, 724, ks, "State"], [724, 742, kl, "Local"]].forEach(function (x) {
+          var raw = krec.substring(x[0], x[1]);
+          if (strip(raw) && numOrZero(raw) !== x[2])
+            errors.push(kwhere + ": K record (state " + st + ") " + x[3] + " Income Tax Withheld Total " + strip(raw) + ", B records sum to " + centsToStr(x[2]) + " (p1220 p.142)");
+        });
+      });
+      // p1220 p.55 Note 1 and p.141: CF/SF-coded A record needs a K record for each coded state.
+      if (iss.A[5] === "1") {
+        var kstates = {}, codedSet = {};
+        iss.K.forEach(function (kw) { kstates[kw[0].substring(746, 748)] = 1; });
+        iss.B.forEach(function (bw) { var c = bw[0].substring(746, 748); if (strip(c)) codedSet[c] = 1; });
+        var coded = Object.keys(codedSet).sort();
+        if (!coded.length && !iss.K.length)
+          errors.push(iss.where + ": A record pos 6 = '1' (Combined Federal/State Filing Program) but no B record has a CF/SF state code and there are no K records. p1220 p.55 Note 1: an A record coded for CF/SF must have coded B records and K records. Fix the export, or blank A pos 6 if the file is not part of CF/SF.");
+        coded.forEach(function (st) {
+          if (!kstates[st]) errors.push(iss.where + ": A record is coded for the Combined Federal/State Filing Program and B records carry CF/SF state code " + st + ", but there is no K record for that state. p1220 p.55 Note 1 requires K records when the A record is coded for CF/SF, and p.141 requires a separate K record for each state reported.");
+        });
+      }
+    });
+    var f = tx.F;
+    if (f !== null) {
+      var na = f.substring(1, 9);
+      if (strip(na) && (!isDigits(na) || parseInt(na, 10) !== tx.issuers.length))
+        errors.push("F record says " + strip(na) + " A records, file has " + tx.issuers.length + " (p1220 p.144)");
+      var np = f.substring(49, 57);
+      if (strip(np) && (!isDigits(np) || parseInt(np, 10) !== totalB))
+        errors.push("F record says " + strip(np) + " payees, file has " + totalB + " B records (p1220 p.144)");
+    }
+    var t = tx.T;
+    if (t !== null) {
+      var tp = t.substring(295, 303);
+      if (strip(tp) && (!isDigits(tp) || parseInt(tp, 10) !== totalB))
+        errors.push("T record says " + strip(tp) + " payees, file has " + totalB + " B records (p1220 p.50)");
+    }
+    return errors;
+  }
+
+  function fmtTin(tin9, kind) {
+    if (kind === "EIN" || kind === "QI-EIN") return tin9.substring(0, 2) + "-" + tin9.substring(2);
+    if (kind === "SSN" || kind === "ITIN" || kind === "ATIN") return tin9.substring(0, 3) + "-" + tin9.substring(3, 5) + "-" + tin9.substring(5);
+    return tin9;
+  }
+  function maskTin(tin) { var d = tin.replace(/[^0-9]/g, ""); return d ? "*****" + d.slice(-4) : "(blank)"; }
+  // TEST-r1 D1: mask any run of 9+ digits (dash or single space between) in printed free text.
+  function maskFreeText(v) { return v.replace(/[0-9](?:[- ]?[0-9]){8,}/g, function (m) { return maskTin(m); }); }
+
+  function Report() {
+    this.errors = []; this.needs_decision = []; this.unmapped = {}; this.unmappedKeys = [];
+    this.unmapped_amounts = {}; this.unmapped_by_payer = {}; this.validation = []; this.warnings = []; this.decisions_applied = [];
+    this.file_totals = {}; this.file_boxes = {};
+  }
+  Report.prototype.addUnmapped = function (recLabel, fname, cite, note, where, value, amount) {
+    var k = JSON.stringify([recLabel, fname]);
+    if (!(k in this.unmapped)) { this.unmapped[k] = { rec: recLabel, name: fname, count: 0, cite: cite, note: note, examples: [] }; }
+    var e = this.unmapped[k];
+    e.count++;
+    if (e.examples.length < 3) {
+      if (value !== undefined && !amount) value = maskFreeText(value);
+      e.examples.push(value === undefined ? where : where + ": " + pyRepr(value));
+    }
+  };
+
+  function listFireOnly(rec, fields, recLabel, where, report) {
+    fields.forEach(function (f) {
+      var v = fld(rec, f);
+      if (f.disp === "fire_only" && strip(v)) {
+        report.addUnmapped(recLabel, f.name, f.cite, "FIRE-only field, no IRIS column", where, f.name.indexOf("TIN") >= 0 ? maskTin(v) : strip(v));
+      } else if (f.disp === "gap" && strip(v)) {
+        report.addUnmapped(recLabel, f.name, f.cite, "no clear IRIS column in the spec; not converted", where, strip(v));
+      } else if (f.disp === "blank" && strip(v)) {
+        report.addUnmapped(recLabel, f.name + " (pos " + f.start + "-" + f.end + ")", f.cite, "should be blank per Pub 1220 but holds data; not converted", where, maskFreeText(strip(v)).substring(0, 40));
+      }
+    });
+  }
+
+  function stateAmount(raw, where, name, report) {
+    if (strip(raw) === "" || raw.replace(/^0+|0+$/g, "") === "") return 0;
+    if (isDigits(raw)) return parseInt(raw, 10);
+    report.addUnmapped("B", name + " (text, read as Special Data Entries continuation)", "p1220 p.112", "non-numeric; SPEC-GAP G3; not converted", where, strip(raw));
+    return 0;
+  }
+
+  function convert(tx, o, report) {
+    var t = tx.T, year = t.substring(1, 5), tables = S.TABLES[year];
+    var layout = tables.fire;
+    if (t[5] === "P") report.errors.push("T record pos 6 = 'P' (prior-year data, p1220 p.48): not supported");
+    if (t[27] === "T") report.warnings.push("T record pos 28 = 'T': this is a FIRE TEST file (p1220 p.48)");
+    listFireOnly(t, layout.T, "T", "T record", report);
+    var out = {}, outOrder = [], tin2Needed = false;
+    tx.issuers.forEach(function (iss) {
+      var a = iss.A, rt = rtOf(a);
+      if (a.substring(1, 5) !== year) report.errors.push(iss.where + ": payment year " + a.substring(1, 5) + " differs from T record " + year + " (p1220 p.48: no mixed years)");
+      if (!(rt in tables.forms)) {
+        var name = S.RETURN_TYPE_NAMES[rt] || ("unknown code " + pyRepr(rt));
+        var seqs = iss.B.map(function (bw) { return strip(bw[0].substring(499, 507)); });
+        var span = seqs.length ? " (B record seq " + seqs[0] + "-" + seqs[seqs.length - 1] + ")" : "";
+        var msg = iss.where + ": Type of Return " + pyRepr(rt) + " = Form " + name + " (p1220 p.56). Only 1099-NEC (NE) and 1099-MISC (A) are supported; this issuer's " + iss.B.length + " records" + span + " were NOT converted.";
+        if (o.skip_unsupported) report.warnings.push(msg);
+        else report.errors.push(msg + " Re-run with --skip-unsupported to convert the rest.");
+        return;
+      }
+      var spec = tables.forms[rt], form = spec.form, bspec = layout["B_" + rt], codes = amountCodes(a);
+      if (!(form in out)) { out[form] = []; outOrder.push(form); }
+      var rows = out[form];
+      if (a[51] === "1") report.errors.push(iss.where + ": issuer Foreign Entity Indicator = 1 (p1220 p.70). Foreign address is free-format city/state/ZIP (p1220 p.71) and cannot be split into IRIS cols O-Q. SPEC-GAP G4.");
+      if (a[132] === "1") report.errors.push(iss.where + ": Transfer Agent Indicator = 1 (p1220 p.71): name line 2 and the address are the agent's, and IRIS has no transfer-agent columns. SPEC-GAP G5.");
+      listFireOnly(a, layout.A, "A", iss.where, report);
+      var cfsfProgram = a[5] === "1";
+      var payer = {}, ptype = o.payer_tin_type, ptin = a.substring(11, 20);
+      payer.A = form; payer.B = year; payer.C = ptype || "";
+      if (!isDigits(ptin)) report.errors.push(iss.where + ": Issuer TIN " + pyRepr(maskTin(ptin)) + " is not 9 digits (p1220 p.55)");
+      payer.D = ptype ? fmtTin(ptin, ptype) : ptin;
+      payer.E = o.names_as_business ? "B" : "";
+      payer.F = strip(a.substring(52, 92));
+      payer.G = a[132] !== "1" ? strip(a.substring(92, 132)) : "";
+      ["H", "I", "J", "K", "N"].forEach(function (k) { payer[k] = ""; });
+      payer.L = "US";
+      payer.M = strip(a.substring(133, 173));
+      payer.O = strip(a.substring(173, 213));
+      payer.P = strip(a.substring(213, 215));
+      payer.Q = strip(a.substring(215, 224));
+      var phone = strip(a.substring(224, 239));
+      if (phone) {
+        payer.R = "D"; payer.S = phone.substring(0, 10);
+        if (phone.length > 10) report.addUnmapped("A", "Issuer Telephone Extension", "p1220 p.72 (pos 225-239); NEC col S p.2", "IRIS Payer Phone has no extension; digits after the first 10 not converted", iss.where, phone.substring(10));
+      } else { payer.R = ""; payer.S = ""; }
+
+      iss.B.forEach(function (bw) {
+        var rec = bw[0], where = bw[1], row = {};
+        spec.columns.forEach(function (c) { row[c[0]] = ""; });
+        for (var k in payer) row[k] = payer[k];
+        if (rec.substring(1, 5) !== year) report.errors.push(where + ": payment year " + rec.substring(1, 5) + " differs from T record (p1220 p.74)");
+        if (rec[5] !== " ") report.errors.push(where + ": Corrected Return Indicator " + pyRepr(rec[5]) + " (p1220 p.74). Corrections are not supported; the TY2025 IRIS CSV guidelines have no correction column.");
+        if (rec[286] === "1") report.errors.push(where + ": Foreign Country Indicator = 1 (p1220 p.78): free-format address cannot be split into IRIS cols AF-AH. SPEC-GAP G4.");
+        listFireOnly(rec, layout.B_common.concat(bspec), "B (" + form + ")", where, report);
+        var ttype = rec[10], tin = rec.substring(11, 20), kind;
+        if (strip(tin) === "") kind = "";
+        else if (ttype === "1") kind = "EIN";
+        else if (ttype === "2") { kind = o.tin_type_2 || ""; tin2Needed = tin2Needed || !o.tin_type_2; }
+        else if (ttype === " ") kind = "UND";
+        else { kind = ""; report.errors.push(where + ": Type of TIN " + pyRepr(ttype) + " is not 1, 2 or blank (p1220 p.75)"); }
+        if (strip(tin) && !isDigits(tin)) report.errors.push(where + ": payee TIN " + maskTin(tin) + " is not 9 digits (p1220 p.75)");
+        row.T = kind;
+        row.U = (kind && isDigits(tin)) ? fmtTin(tin, kind) : strip(tin);
+        row.V = o.names_as_business ? "B" : "";
+        row.W = strip(rec.substring(287, 327));
+        row.X = strip(rec.substring(327, 367));
+        row.AC = "US";
+        row.AD = strip(rec.substring(367, 407));
+        row.AF = strip(rec.substring(447, 487));
+        row.AG = strip(rec.substring(487, 489));
+        row.AH = strip(rec.substring(489, 498));
+        row.AI = strip(rec.substring(40, 44));
+        row.AJ = strip(rec.substring(20, 40));
+        row[spec.second_tin] = rec[543] === "2" ? "Y" : "N";
+        row[spec.direct_sales] = rec[546] === "1" ? "Y" : "N";
+        if (spec.fatca) row[spec.fatca] = rec[547] === "1" ? "Y" : "N";
+        var inds = [[543, "2", "Second TIN Notice"], [546, "1", "Direct Sales Indicator"]];
+        if (spec.fatca) inds.push([547, "1", "FATCA Filing Requirement Indicator"]);
+        inds.forEach(function (x) {
+          if (rec[x[0]] !== " " && rec[x[0]] !== x[1]) report.errors.push(where + ": " + x[2] + " = " + pyRepr(rec[x[0]]) + ", expected " + pyRepr(x[1]) + " or blank (p1220 p.112-113)");
+        });
+        for (var i = 0; i < AMOUNT_CODES.length; i++) {
+          var code = AMOUNT_CODES[i], raw = rec.substring(54 + 12 * i, 66 + 12 * i);
+          var cents = parseAmount(raw, where + " Payment Amount " + code);
+          if (cents === 0) continue;
+          if ((code in spec.amounts) && codes.indexOf(code) >= 0) {
+            row[spec.amounts[code][0]] = centsToStr(cents);
+          } else {
+            var note;
+            if (code in spec.amount_gaps) note = spec.amount_gaps[code];
+            else if (codes.indexOf(code) < 0) note = "amount code " + code + " not declared in the A record (p1220 p.57); not converted";
+            else note = "amount code " + code + " is not a " + form + " amount code (p1220 p.65); not converted";
+            report.addUnmapped("B (" + form + ")", "Payment Amount " + code, "p1220 p.77-78", note, where, centsToStr(cents), true);
+            var uk = form + "|" + code;
+            report.unmapped_amounts[uk] = (report.unmapped_amounts[uk] || 0) + cents;
+            var pk = form + "|" + ptin + "|" + code;
+            report.unmapped_by_payer[pk] = (report.unmapped_by_payer[pk] || 0) + cents;
+          }
+        }
+        var cf = rec.substring(746, 748), stAbbr = "";
+        if (strip(cf)) {
+          stAbbr = S.CFSF_STATE_CODES[cf] || "";
+          if (!stAbbr) report.errors.push(where + ": CF/SF code " + pyRepr(cf) + " is not in Pub 1220 Table 1 (p1220 p.25)");
+          else if (!cfsfProgram) report.errors.push(where + ": CF/SF code " + cf + " on B record but A record pos 6 is not '1' (p1220 p.55)");
+          else row[spec.cfsf] = stAbbr;
+        }
+        var stTax = stateAmount(rec.substring(722, 734), where, "State Income Tax Withheld", report);
+        var loTax = stateAmount(rec.substring(734, 746), where, "Local Income Tax Withheld", report);
+        if (stTax || loTax) {
+          if (stAbbr && cfsfProgram) {
+            row[spec.state1] = stAbbr;
+            if (stTax) row[spec.state1_tax] = centsToStr(stTax);
+            if (loTax) row[spec.state1_local] = centsToStr(loTax);
+          } else {
+            [[stTax, "State Income Tax Withheld"], [loTax, "Local Income Tax Withheld"]].forEach(function (x) {
+              if (x[0]) report.addUnmapped("B (" + form + ")", x[1], "p1220 p.112-114", "no CF/SF state code on the record, so the IRIS State 1 state is unknown (SPEC-GAP G3); not converted", where, centsToStr(x[0]), true);
+            });
+          }
+        }
+        rows.push({ row: row, where: where, seq: rec.substring(499, 507) });
+      });
+    });
+    var anySupported = tx.issuers.some(function (i) { return rtOf(i.A) in tables.forms; });
+    if (!o.payer_tin_type && anySupported)
+      report.needs_decision.push("--payer-tin-type EIN|SSN: IRIS col C 'Payer TIN Type' is required (NEC p.1) but the FIRE A record has no TIN type (p1220 p.55 pos 12-20). Applies to every issuer in the file. SPEC-GAP G2.");
+    if (tin2Needed)
+      report.needs_decision.push("--tin-type-2 SSN|ITIN|ATIN: FIRE Type of TIN '2' means SSN, ITIN or ATIN (p1220 p.75) but IRIS col T needs one of them (NEC p.2). Applies to every type-2 payee. SPEC-GAP G2.");
+    if (!o.names_as_business)
+      report.needs_decision.push("--names-as-business: FIRE has one free-text name line per payer/payee (p1220 p.71, p.79) and no business/individual flag; IRIS needs Name Type B or I and, for I, split first/last names (NEC cols E-K, V-AB). With this flag every name goes to Business Name Line 1/2 with Name Type 'B'. SPEC-GAP G2.");
+    else report.decisions_applied.push("--names-as-business: FIRE name lines -> IRIS Business Name Line 1/2, Name Type B");
+    if (o.payer_tin_type) report.decisions_applied.push("--payer-tin-type " + o.payer_tin_type + " for every issuer");
+    if (o.tin_type_2) report.decisions_applied.push("--tin-type-2 " + o.tin_type_2 + " for every payee with FIRE Type of TIN '2'");
+    return [out, outOrder];
+  }
+
+  function charset(s) { var o = {}; s.split("").forEach(function (c) { o[c] = 1; }); return o; }
+  var ALNUM = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  var NAME_B1 = charset(ALNUM + " -#()&'"), NAME_B2 = charset(ALNUM + " -#()&'/%");
+  var ADDR = charset(ALNUM + " -/"), CITY = charset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ ");
+  function spacesBad(v) { return v !== strip(v) || v.indexOf("  ") >= 0; }
+
+  function validateRow(row, spec) {
+    var issues = [];
+    function chk(letter, maxlen, cs, label) {
+      var v = row[letter] || "";
+      if (!v) return;
+      if (v.length > maxlen) issues.push("col " + letter + " " + label + ": " + v.length + " characters, max " + maxlen);
+      if (cs) {
+        var bad = {};
+        v.split("").forEach(function (ch) { if (!cs[ch]) bad[ch] = 1; });
+        var b = Object.keys(bad).sort().join("");
+        if (b) issues.push("col " + letter + " " + label + ": characters not allowed: " + pyRepr(b));
+      }
+      if (spacesBad(v)) issues.push("col " + letter + " " + label + ": leading, trailing or adjacent spaces");
+      if ("=+-@".indexOf(v[0]) >= 0) issues.push("col " + letter + " " + label + ": starts with " + pyRepr(v[0]) + "; a spreadsheet may read it as a formula");
+    }
+    chk("F", 40, NAME_B1, "Payer Name Line 1"); chk("G", 40, NAME_B2, "Payer Name Line 2");
+    chk("M", 35, ADDR, "Payer Address Line 1"); chk("O", 40, CITY, "Payer City/Town");
+    chk("W", 40, NAME_B1, "Recipient Name Line 1"); chk("X", 40, NAME_B2, "Recipient Name Line 2");
+    chk("AD", 35, ADDR, "Recipient Address Line 1"); chk("AF", 40, CITY, "Recipient City/Town");
+    chk("AJ", 20, null, "Form Account Number");
+    [["F", "Payer Name Line 1"], ["M", "Payer Address Line 1"], ["O", "Payer City/Town"], ["P", "Payer State"], ["Q", "Payer ZIP"],
+     ["AD", "Recipient Address Line 1"], ["AF", "Recipient City/Town"], ["AG", "Recipient State"], ["AH", "Recipient ZIP"],
+     ["W", "Recipient Name Line 1"]].forEach(function (x) { if (!row[x[0]]) issues.push("col " + x[0] + " " + x[1] + ": required but empty"); });
+    ["Q", "AH"].forEach(function (l) {
+      var v = row[l] || "";
+      if (v && !(isDigits(v) && [5, 9, 12].indexOf(v.length) >= 0)) issues.push("col " + l + " ZIP " + pyRepr(v) + ": must be 5, 9 or 12 digits");
+    });
+    ["P", "AG"].forEach(function (l) {
+      var v = row[l] || "";
+      if (v && !/^[A-Z]{2}$/.test(v)) issues.push("col " + l + " state " + pyRepr(v) + ": must be a 2-letter abbreviation");
+    });
+    var oc = row.AI || "";
+    if (oc && !/^[0-9]{4}$/.test(oc)) issues.push("col AI Office Code " + pyRepr(oc) + ": must be exactly 4 digits");
+    var acct = row.AJ || "";
+    if (acct) {
+      var a2 = acct.replace(/-/g, "");
+      if (a2 === (row.D || "").replace(/-/g, "") || a2 === (row.U || "").replace(/-/g, "")) issues.push("col AJ Form Account Number may not equal a TIN");
+    }
+    var s = row.S || "";
+    if (s && !(isDigits(s) && s.length === 10)) issues.push("col S Payer Phone " + pyRepr(s) + ": domestic phone must be 10 digits");
+    if (row.U && !row.T) issues.push("col T Recipient TIN Type: required when a TIN is entered");
+    var u = (row.U || "").replace(/-/g, "");
+    if (!u) issues.push("col U Recipient TIN: blank. Pub 1220 p.75 says the payee TIN is required; IRIS accepts the row, but a missing TIN can bring an IRS penalty notice. Add it before you file");
+    else if (/^(.)\1*$/.test(u)) issues.push("col U Recipient TIN: every digit is the same; Pub 1220 p.75 calls this an obviously incorrect TIN");
+    if (spec.form === "1099-NEC" && !row.AL && row.AM !== "Y") issues.push("col AL/AM: Box 1 must be filled in or Box 2 checked (NEC p.4)");
+    return issues;
+  }
+
+  function csvLine(values, quoteCols) {
+    return values.map(function (v, i) {
+      if ((quoteCols.indexOf(i) >= 0 && v) || /[,"\r\n]/.test(v)) return '"' + v.replace(/"/g, '""') + '"';
+      return v;
+    }).join(",");
+  }
+
+  function renderBatches(formRows, spec, size) {
+    var cols = spec.columns, header = cols.map(function (c) { return c[1]; }), cf = [];
+    cols.forEach(function (c, i) { if (c[0] === spec.cfsf) cf.push(i); });
+    var batches = [];
+    for (var start = 0; start < formRows.length; start += size) {
+      var lines = [csvLine(header, [])];
+      formRows.slice(start, start + size).forEach(function (r) {
+        lines.push(csvLine(cols.map(function (c) { return r.row[c[0]] || ""; }), cf));
+      });
+      batches.push(lines.join("\r\n") + "\r\n");
+    }
+    return batches;
+  }
+
+  function parseCsv(text) {  // RFC 4180 reader for the round-trip re-read
+    var rows = [], row = [], f = "", i = 0, q = false;
+    while (i < text.length) {
+      var ch = text[i];
+      if (q) {
+        if (ch === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; }
+        else f += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === ",") { row.push(f); f = ""; }
+      else if (ch === "\r") { /* skip */ }
+      else if (ch === "\n") { row.push(f); rows.push(row); row = []; f = ""; }
+      else f += ch;
+      i++;
+    }
+    if (f || row.length) { row.push(f); rows.push(row); }
+    return rows;
+  }
+
+  function readCsvSums(texts, spec) {
+    var cols = spec.columns, sums = {}, nrows = 0, byPayer = {};
+    Object.keys(spec.amounts).forEach(function (k) { sums[spec.amounts[k][0]] = 0; });
+    sums[spec.state1_tax] = 0; sums[spec.state1_local] = 0;
+    var dIdx = cols.map(function (c) { return c[0]; }).indexOf("D");
+    texts.forEach(function (text) {
+      var rows = parseCsv(text);
+      if (rows[0].join("\u0000") !== cols.map(function (c) { return c[1]; }).join("\u0000")) throw new Error("header mismatch on re-read");
+      rows.slice(1).forEach(function (row) {
+        nrows++;
+        if (row.length !== cols.length) throw new Error("row has " + row.length + " columns, template has " + cols.length);
+        var pt = row[dIdx].replace(/[^0-9]/g, "");
+        if (!(pt in byPayer)) { var z = { rows: 0 }; Object.keys(sums).forEach(function (k) { z[k] = 0; }); byPayer[pt] = z; }
+        var ps = byPayer[pt]; ps.rows++;
+        cols.forEach(function (c, i) {
+          if ((c[0] in sums) && row[i]) { var p = row[i].split("."); var v = parseInt(p[0], 10) * 100 + parseInt(p[1], 10); sums[c[0]] += v; ps[c[0]] += v; }
+        });
+      });
+    });
+    return [sums, nrows, byPayer];
+  }
+
+  function cTotal(c, code) { var i = AMOUNT_CODES.indexOf(code); return parseAmount(c.substring(15 + 18 * i, 33 + 18 * i), "C record"); }
+
+  function roundtrip(tx, tables, batches, report) {
+    var lines = [], ok = true;
+    Object.keys(tables.forms).forEach(function (fc) {
+      var spec = tables.forms[fc], form = spec.form;
+      var issuers = tx.issuers.filter(function (i) { return rtOf(i.A) === fc; });
+      if (!issuers.length) return;
+      var r = readCsvSums(batches[form] || [], spec), csvSums = r[0], nrows = r[1], csvByPayer = r[2];
+      var nb = issuers.reduce(function (a, i) { return a + i.B.length; }, 0);
+      if (nrows !== nb) ok = false;
+      lines.push(form + ": " + nb + " FIRE B records -> " + nrows + " CSV rows " + (nrows === nb ? "OK" : "MISMATCH"));
+      for (var j = 0; j < AMOUNT_CODES.length; j++) {
+        var code = AMOUNT_CODES[j];
+        var fireTotal = issuers.reduce(function (a, i) { return a + i.b_sums[code]; }, 0);
+        var cTot = issuers.reduce(function (a, i) { return a + cTotal(i.C, code); }, 0);
+        var mapped = spec.amounts[code], csvTotal = mapped ? csvSums[mapped[0]] : 0;
+        var unm = report.unmapped_amounts[form + "|" + code] || 0;
+        if (fireTotal === 0 && cTot === 0 && csvTotal === 0) continue;
+        var good = fireTotal === cTot && cTot === csvTotal + unm;
+        ok = ok && good;
+        lines.push("  Amount code " + code + " -> " + (mapped ? "col " + mapped[0] : "(no IRIS column)") + ": FIRE B sum " + centsToStr(fireTotal) +
+          ", C control total " + centsToStr(cTot) + ", CSV sum " + centsToStr(csvTotal) + ", unmapped " + centsToStr(unm) + "  " +
+          (good && unm === 0 ? "OK" : (good ? "NOT CONVERTED" : "MISMATCH")));
+      }
+      // Per payer (issuer TIN, A pos 12-20); mirrors roundtrip() in fire_to_iris.py
+      var payers = [];
+      issuers.forEach(function (i) { var pt = i.A.substring(11, 20); if (payers.indexOf(pt) < 0) payers.push(pt); });
+      payers.forEach(function (pt) {
+        var mine = issuers.filter(function (i) { return i.A.substring(11, 20) === pt; });
+        var ps = csvByPayer[pt.replace(/[^0-9]/g, "")] || { rows: 0 };
+        var pnb = mine.reduce(function (a, i) { return a + i.B.length; }, 0);
+        var pname = maskFreeText(strip(mine[0].A.substring(52, 92)));
+        var pok = ps.rows === pnb, plines = [];
+        AMOUNT_CODES.split("").forEach(function (code) {
+          var fireTotal = mine.reduce(function (a, i) { return a + i.b_sums[code]; }, 0);
+          var cTot = mine.reduce(function (a, i) { return a + cTotal(i.C, code); }, 0);
+          var mapped = spec.amounts[code], csvTotal = mapped ? (ps[mapped[0]] || 0) : 0;
+          var unm = report.unmapped_by_payer[form + "|" + pt + "|" + code] || 0;
+          if (fireTotal === 0 && cTot === 0 && csvTotal === 0) return;
+          var good = fireTotal === cTot && cTot === csvTotal + unm;
+          pok = pok && good;
+          plines.push("    Amount code " + code + ": FIRE B sum " + centsToStr(fireTotal) + ", C control total " + centsToStr(cTot) +
+            ", CSV sum " + centsToStr(csvTotal) + ", unmapped " + centsToStr(unm) + "  " + (good && unm === 0 ? "OK" : (good ? "NOT CONVERTED" : "MISMATCH")));
+        });
+        ok = ok && pok;
+        lines.push("  Payer " + maskTin(pt) + " " + pname + ": " + pnb + " FIRE B records -> " + ps.rows + " CSV rows " + (pok ? "OK" : "MISMATCH"));
+        lines.push.apply(lines, plines);
+      });
+    });
+    return [ok, lines];
+  }
+
+  // Per-CSV record count and box totals, re-read from each CSV's own text; asserts they add up to the form
+  // totals. Mirrors file_totals() in fire_to_iris.py.
+  function fileTotals(tx, tables, batches, report) {
+    var ok = true, lines = [];
+    Object.keys(tables.forms).forEach(function (fc) {
+      var spec = tables.forms[fc], form = spec.form;
+      var issuers = tx.issuers.filter(function (i) { return rtOf(i.A) === fc; });
+      if (!issuers.length) return;
+      var titles = {};
+      spec.columns.forEach(function (c) { titles[c[0]] = c[1]; });
+      var perFile = (batches[form] || []).map(function (t) { var r = readCsvSums([t], spec); return [r[1], r[0]]; });
+      var boxes = [];
+      var good = perFile.reduce(function (a, f) { return a + f[0]; }, 0) === issuers.reduce(function (a, i) { return a + i.B.length; }, 0);
+      AMOUNT_CODES.split("").forEach(function (code) {
+        var mapped = spec.amounts[code];
+        if (!mapped) return;
+        var letter = mapped[0];
+        var want = issuers.reduce(function (a, i) { return a + i.b_sums[code]; }, 0) - (report.unmapped_amounts[form + "|" + code] || 0);
+        var got = perFile.reduce(function (a, f) { return a + f[1][letter]; }, 0);
+        if (got !== want) good = false;
+        if (want || got) boxes.push([letter, titles[letter].split(" - ")[0]]);
+      });
+      report.file_totals[form] = perFile;
+      report.file_boxes[form] = boxes;
+      ok = ok && good;
+      lines.push(form + ": " + perFile.length + " CSV file(s); per-file records and box totals add up to the form totals  " + (good ? "OK" : "MISMATCH"));
+    });
+    return [ok, lines];
+  }
+
+  function fileLine(name, nrows, sums, boxes) {
+    var parts = boxes.map(function (b) { return b[1] + " col " + b[0] + " " + centsToStr(sums[b[0]] || 0); });
+    return name + " (" + nrows + " records" + (parts.length ? "; " + parts.join(", ") : "") + ")";
+  }
+
+  // Python: years in TABLES sorted; mirrors run()
+  function run(text, o) {
+    var report = new Report();
+    var sr = splitRecords(text), records = sr[0];
+    if (sr[1].length) throw refusal("not a valid FIRE file: ", sr[1]);
+    if (!records.length) throw new Refusal("empty file");
+    var pt = parseTransmission(records), tx = pt[0];
+    if (pt[1].length) throw refusal("FIRE file structure: ", pt[1]);
+    var year = tx.T.substring(1, 5), tables = S.TABLES[year];
+    if (!tables) throw new Refusal("FIRE payment year " + pyRepr(year) + ": no IRIS template in this tool for that tax year (have: " + Object.keys(S.TABLES).sort().join(", ") + "). See SPEC-GAP.md G6.");
+    report.errors = report.errors.concat(checkControls(tx, tables.fire, tables.forms));
+    var cv = convert(tx, o, report), rows = cv[0], order = cv[1], batches = {};
+    order.forEach(function (form) {
+      var spec = Object.keys(tables.forms).map(function (k) { return tables.forms[k]; }).filter(function (s) { return s.form === form; })[0];
+      rows[form].forEach(function (r) {
+        validateRow(r.row, spec).forEach(function (issue) {
+          report.validation.push(form + " " + r.where + " (payee TIN " + maskTin(r.row.U || "") + "): " + maskFreeText(issue));
+        });
+      });
+      batches[form] = renderBatches(rows[form], spec, o.batch_size);
+    });
+    var rt = roundtrip(tx, tables, batches, report);
+    var ft = fileTotals(tx, tables, batches, report);
+    rt[1] = rt[1].concat(ft[1]);
+    if (!ft[0]) report.errors.push("per-file totals do not add up to the form totals (see ROUND-TRIP)");
+    if (Object.keys(report.unmapped_amounts).length && !o.allow_unmapped)
+      report.errors.push("payment amounts with no IRIS column (listed under UNMAPPED). Converting would drop money from the return. Re-run with --allow-unmapped only if you will key those amounts by hand.");
+    if (!rt[0]) report.errors.push("round-trip total check failed (see ROUND-TRIP)");
+    var code = (report.errors.length || report.needs_decision.length) ? 2 : (report.validation.length ? 1 : 0);
+    return { batches: batches, order: order, report: report, rtLines: rt[1], code: code };
+  }
+
+  function renderReport(report, rtLines, written, code, batchSize) {
+    var out = [S.DISCLAIMER, "", S.TCC_WARNING, "", S.PRIVACY_NOTE, ""];
+    out.push("STATUS: " + { 0: "CONVERTED", 1: "CONVERTED WITH IRIS FORMAT WARNINGS (fix before upload)", 2: "REFUSED - no CSVs written" }[code]);
+    out.push("Batch size: " + batchSize + " records per CSV (Pub 5717 Rev. 9-2026 p.20: up to 250)");
+    if (written.length) { out.push("Files written:"); written.forEach(function (w) { out.push("  " + w); }); }
+    [["ERRORS", report.errors], ["DECISIONS NEEDED (spec is ambiguous; pass a flag)", report.needs_decision],
+     ["DECISIONS APPLIED", report.decisions_applied], ["WARNINGS", report.warnings]].forEach(function (x) {
+      if (x[1].length) { out.push("", x[0] + ":"); x[1].forEach(function (i) { out.push("  - " + i); }); }
+    });
+    out.push("", "ROUND-TRIP (per form and per payer, each payment-amount box):");
+    rtLines.forEach(function (l) { out.push("  " + l); });
+    var keys = Object.keys(report.unmapped);
+    out.push("", "UNMAPPED / NOT CONVERTED FIRE FIELDS WITH DATA (" + keys.length + "):");
+    if (!keys.length) out.push("  none");
+    var entries = keys.map(function (k) { return report.unmapped[k]; });
+    entries.sort(function (a, b) { return a.rec < b.rec ? -1 : a.rec > b.rec ? 1 : (a.name < b.name ? -1 : a.name > b.name ? 1 : 0); });
+    entries.forEach(function (e) {
+      out.push("  - " + e.rec + " record, " + e.name + " [" + e.cite + "]: " + e.count + " record(s). " + e.note + ". e.g. " + e.examples.join("; "));
+    });
+    out.push("", "IRIS FORMAT ISSUES (" + report.validation.length + ") - values were NOT changed; fix these before upload (the portal may reject them):");
+    if (report.validation.length) report.validation.forEach(function (v) { out.push("  - " + v); });
+    else out.push("  none");
+    return out.join("\n") + "\n";
+  }
+
+  function pad3(n) { return ("00" + n).slice(-3); }
+
+  // Full pipeline used by the page and by the node parity test. Returns files to offer for download.
+  function convertFile(text, baseName, o) {
+    var res;
+    try { res = run(text, o); }
+    catch (e) {
+      if (!(e instanceof Refusal)) throw e;
+      var details = e.details.length ? e.details : [e.refusal];
+      var rr = [S.DISCLAIMER, "", S.TCC_WARNING, "", S.PRIVACY_NOTE, "", "STATUS: REFUSED - no CSVs written", "", "ERRORS (" + details.length + "):"]
+        .concat(details.map(function (d) { return "  - " + d; })).join("\n") + "\n";
+      return { code: 2, refused: e.refusal, files: [{ name: "conversion-report.txt", text: rr }], report: rr };
+    }
+    var files = [], written = [];
+    if (res.code !== 2) {
+      res.order.forEach(function (form) {
+        var texts = res.batches[form];
+        texts.forEach(function (t, i) {
+          var name = baseName + "_" + form + "_batch" + pad3(i + 1) + "_of_" + pad3(texts.length) + ".csv";
+          files.push({ name: name, text: t });
+          var ftot = res.report.file_totals[form][i];
+          if (ftot[0] !== t.split("\r\n").length - 2) throw new Error("per-file record count disagrees with the CSV text: " + name);
+          written.push(fileLine(name, ftot[0], ftot[1], res.report.file_boxes[form]));
+        });
+      });
+    }
+    var rep = renderReport(res.report, res.rtLines, written, res.code, o.batch_size);
+    files.push({ name: "conversion-report.txt", text: rep });
+    return { code: res.code, files: files, report: rep };
+  }
+
+  return { convertFile: convertFile, S: S };
+})();
+</script>
+
+<script id="ui">
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  $("disclaimer").textContent = F2I.S.DISCLAIMER;
+  $("tcc").textContent = F2I.S.TCC_WARNING;
+  var fileText = null, fileBase = "fire";
+  var urls = [];
+  function load(file) {
+    var r = new FileReader();
+    r.onload = function () {
+      var bytes = new Uint8Array(r.result), s = "";
+      for (var i = 0; i < bytes.length; i += 8192) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192)); // latin-1, like the CLI
+      fileText = s;
+      fileBase = file.name.replace(/\.[^.]*$/, "") || "fire";
+      $("go").disabled = false;
+    };
+    r.readAsArrayBuffer(file);
+  }
+  $("file").addEventListener("change", function (e) { if (e.target.files[0]) load(e.target.files[0]); });
+  var drop = $("drop");
+  drop.addEventListener("dragover", function (e) { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", function () { drop.classList.remove("over"); });
+  drop.addEventListener("drop", function (e) { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) load(e.dataTransfer.files[0]); });
+  $("go").addEventListener("click", function () {
+    var size = parseInt($("batch").value, 10);
+    if (!(size >= 1 && size <= 250)) { alert("Records per CSV must be 1-250."); return; }
+    var o = { payer_tin_type: $("ptin").value || null, tin_type_2: $("tin2").value || null, names_as_business: $("biz").checked,
+              allow_unmapped: $("allowun").checked, skip_unsupported: $("skipun").checked, batch_size: size };
+    var res = F2I.convertFile(fileText, fileBase, o);
+    urls.forEach(function (u) { URL.revokeObjectURL(u); }); urls = [];
+    $("result").hidden = false;
+    var st = $("status");
+    st.className = res.code === 0 ? "ok" : "bad";
+    st.textContent = res.refused ? "Refused: " + res.refused : { 0: "Converted. Check every row in the IRIS portal before you submit.", 1: "Converted, but some values break IRIS format rules (listed below). Fix them before upload.", 2: "Refused: no CSVs written. See the report." }[res.code];
+    var dl = $("downloads"); dl.textContent = "";
+    res.files.forEach(function (f) {
+      var u = URL.createObjectURL(new Blob([f.text], { type: f.name.slice(-4) === ".csv" ? "text/csv" : "text/plain" }));
+      urls.push(u);
+      var a = document.createElement("a"); a.href = u; a.download = f.name; a.textContent = "Download " + f.name;
+      dl.appendChild(a);
+    });
+    $("report").textContent = res.report || "";
+  });
+})();
+</script>
+</body>
+</html>
